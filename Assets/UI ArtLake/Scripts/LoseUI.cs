@@ -1,3 +1,5 @@
+using Project.Core;
+using Project.GameState;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -13,6 +15,8 @@ namespace ArtLake.UI
         [Header("Events (Optional)")]
         [SerializeField] private UnityEvent onRestartClicked;
         [SerializeField] private UnityEvent onMainMenuClicked;
+
+        public override bool DismissOnCancel => false;
 
         private void Reset()
         {
@@ -31,16 +35,30 @@ namespace ArtLake.UI
             if (mainMenuButton != null) mainMenuButton.onClick.RemoveListener(GoToMainMenu);
         }
 
-        public void Restart()
+        public async void Restart()
         {
             onRestartClicked?.Invoke();
             UIManager.Instance.Hide(this);
+
+            if (ServiceLocator.TryGet<IGameStateManager>(out var gsm))
+                gsm.ChangeState(GameState.Gameplay);
+
+            if (ServiceLocator.TryGet<ISceneLoader>(out var sceneLoader))
+                await sceneLoader.SwitchSceneAsync("GamePlay");
         }
 
-        public void GoToMainMenu()
+        public async void GoToMainMenu()
         {
             onMainMenuClicked?.Invoke();
-            UIManager.Instance.Show<MainMenuUI>();
+
+            if (ServiceLocator.TryGet<IGameStateManager>(out var gsm))
+                gsm.ChangeState(GameState.MainMenu);
+
+            if (!ServiceLocator.TryGet<ISceneLoader>(out var sceneLoader)) return;
+            bool success = await sceneLoader.SwitchSceneAsync("MainMenu");
+
+            if (success && UIManager.Instance != null)
+                UIManager.Instance.Show<MainMenuUI>();
         }
     }
 }

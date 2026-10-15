@@ -1,3 +1,6 @@
+using Project.Core;
+using Project.GameState;
+using Project.UI;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -8,8 +11,11 @@ namespace ArtLake.UI
     {
         [Header("Main Menu UI")]
         [SerializeField] private Button playButton;
-        [SerializeField] private Button OptionsButton;
-        [SerializeField] private Button ExitButton;
+        [SerializeField] private Button optionsButton;
+        [SerializeField] private Button exitButton;
+
+        [Header("Scena Target")]
+        [SerializeField] private string lobbySceneName = "Lobby";
 
         [Header("Events (Optional)")]
         [SerializeField] private UnityEvent onPlay;
@@ -21,22 +27,32 @@ namespace ArtLake.UI
 
         private void OnEnable()
         {
-            if (playButton != null) playButton.onClick.AddListener(GoToHud);
-            if (OptionsButton != null) OptionsButton.onClick.AddListener(GoToOptions);
-            if (ExitButton != null) ExitButton.onClick.AddListener(ExitGame);
+            if (playButton != null) playButton.onClick.AddListener(GoToLobby);
+            if (optionsButton != null) optionsButton.onClick.AddListener(GoToOptions);
+            if (exitButton != null) exitButton.onClick.AddListener(ExitGame);
         }
 
         private void OnDisable()
         {
-            if (playButton != null) playButton.onClick.RemoveListener(GoToHud);
-            if (OptionsButton != null) OptionsButton.onClick.RemoveListener(GoToOptions);
-            if (ExitButton != null) ExitButton.onClick.RemoveListener(ExitGame);
+            if (playButton != null) playButton.onClick.RemoveListener(GoToLobby);
+            if (optionsButton != null) optionsButton.onClick.RemoveListener(GoToOptions);
+            if (exitButton != null) exitButton.onClick.RemoveListener(ExitGame);
         }
 
-        public void GoToHud()
+        public async void GoToLobby()
         {
             onPlay?.Invoke();
-            UIManager.Instance.Show<HudUI>();
+
+            if (!ServiceLocator.TryGet<ISceneLoader>(out var sceneLoader)) return;
+            bool success = await sceneLoader.SwitchSceneAsync(lobbySceneName);
+
+            if (!success) return;
+
+            if (ServiceLocator.TryGet<IGameStateManager>(out var gsm))
+                gsm.ChangeState(GameState.Lobby);
+
+            if (UIManager.Instance != null)
+                UIManager.Instance.Show<HudUI>();
         }
 
         public void GoToOptions()

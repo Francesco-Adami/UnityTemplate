@@ -1,229 +1,106 @@
 # Master Technical Design Document (TDD) — UnityTemplate
 
-Documento di architettura tecnica generale del progetto. Pensato per essere chiaro, modulare e spiegato nel modo più semplice possibile ("Monkey-Proof").
+Documento di architettura tecnica generale del progetto. Pensato per essere chiaro, modulare e spiegato nel modo più semplice possibile ("Monkey-Proof"). Basato sui principi della Clean Architecture.
 
 ---
 
 ## 🗺️ Mappa dei Sistemi (Architettura Generale)
 
+L'architettura si basa su un **Service Locator Pattern** accessibile globalmente.
+Nessun manager si cerca usando `FindObjectOfType`. Tutti implementano un'interfaccia e si registrano in fase di Awake.
+
 | Modulo | Stato | Responsabile Principale | Descrizione Veloce |
 |---|---|---|---|
-| **01. Scene Management** | 🟩 **Attivo** | [`SceneLoader`](file:///c:/Users/francesco/Documents/Github/UnityTemplate/Assets/_Project/Architecture/Managers/SceneLoader.cs) | Gestione ibrida additiva delle scene, transizioni, memoria e persistenza. |
-| **02. Audio Service** | ⬜ *Pianificato* | `AudioService` | Gestione musica di sottofondo (BGM), effetti sonori (SFX) e mixer audio. |
-| **03. UI Framework** | ⬜ *Pianificato* | `UIManager` | Stack di viste, finestre modali, transizioni fade e navigazione con gamepad. |
-| **04. Save & State System** | ⬜ *Pianificato* | `SaveManager` | Salvataggio dati locale/cloud, serializzazione e stato globale persistente. |
-| **05. Input Handling** | ⬜ *Pianificato* | `InputReader` | Integrazione New Input System tramite eventi C# disaccoppiati. |
+| **00. Core Architecture** | 🟩 **Completato** | `ServiceLocator`, `Bootstrapper` | Inversione di dipendenza globale. Avvio sequenziale e sincronizzazione manager. |
+| **01. Scene Management** | 🟩 **Completato** | `SceneLoader` | Gestione asincrona (Unity 6 Awaitable) delle scene, transizioni e memoria. |
+| **02. Audio Service** | 🟩 **Completato** | `AudioService` | Gestione Crossfade BGM, pool di SFX, controllo volumi e persistenza. |
+| **03. UI Framework** | 🟩 **Completato** | `UIManager` (ArtLake) | Stack di viste, modali, navigazione e commutazione input. |
+| **04. Save System** | 🟩 **Completato** | `SaveService` | Salvataggio persistente su JSON (SettingsData e GameData separati). |
+| **05. Game State** | 🟩 **Completato** | `GameStateManager` | Macchina a stati globale (Boot, MainMenu, Lobby, Gameplay, Paused, GameOver). |
+| **06. Input Handling** | 🟩 **Completato** | `InputReaderSO` | Lettura centralizzata di InputSystem, interfacce disaccoppiate e gestione mapping contestuali (UI vs Player). |
+| **07. Player & Camera**| 🟩 **Completato** | `PlayerController`, `CameraController` | Movimento 3D, gravità e terza persona. Rigorosamente disaccoppiati, usano `IInputReader`. |
+
+---
+
+## 📦 00. Core Architecture
+
+### Service Locator (`ServiceLocator`)
+- Fornisce un container centrale per i servizi (es. `ISceneLoader`, `IAudioService`).
+- Registrazione: `ServiceLocator.Register<IService>(this)` nell'`Awake`.
+- Risoluzione: `if (ServiceLocator.TryGet<IService>(out var service)) { ... }`.
+- Pulisce automaticamente i dizionari allo scaricamento (anche se sono su `DontDestroyOnLoad`).
+
+### Bootstrapper
+Il `Bootstrapper` vive nella scena fissa **`Bootstrap`**.
+Assicura che tutti i servizi si registrino correttamente e sincronizza dati prima di passare il controllo al `SceneLoader` per caricare `MainMenu`.
 
 ---
 
 ## 📦 01. Scene Management (`SceneLoader`)
 
-### 🐒 Spiegazione "Monkey": La Metafora del Teatro
-
-Immagina il tuo videogioco come un teatro:
-1. **La Scena `Bootstrap` è la Cabina di Regia:**
-   - Si accende all'avvio del gioco e **non si spegne mai**.
-   - Ci vivono i manager che controllano tutto (come lo `SceneLoader`).
-   - Non toccarla, non scaricarla, non metterci dentro i nemici o la grafica di gioco.
-2. **Le Scene di Contenuto (`MainMenu`, `Level_01`, ecc.) sono il Palcoscenico:**
-   - C'è solo una scena principale attiva alla volta.
-   - Quando cambi livello, gli attori vecchi escono, si pulisce il pavimento da terra (scarico memoria RAM/VRAM con `UnloadUnusedAssets`), ed entrano i nuovi attori.
-3. **Le Scene Additive (`HUD`, `Minimappa`, `Inventario`) sono gli Oggetti di Scena:**
-   - Sono livelli extra che puoi montare e smontare sopra al palcoscenico senza cacciare via gli attori.
-
-```mermaid
-graph TD
-    subgraph Cabina di Regia ["Cabina di Regia (Sempre Accesa)"]
-        BS["Scena: Bootstrap\n(SceneLoader, Servizi Persistenti)"]
-    end
-
-    subgraph Palcoscenico ["Palcoscenico Principale (Uno alla volta)"]
-        SC1["Scena Attiva: MainMenu"] -.->|SwitchSceneAsync| SC2["Scena Attiva: Level_01"]
-    end
-
-    subgraph Overlay ["Livelli Additivi Opzionali"]
-        HUD["Scena: InGameHUD"]
-        PAUSE["Scena: PauseMenu"]
-    end
-
-    BS --- SC1
-    SC2 --- HUD
-    SC2 --- PAUSE
-```
+Gestisce le scene in modo additivo su `Bootstrap`.
+Usa `Awaitable` (Unity 6). Offre:
+- `SwitchSceneAsync("NomeScena")`: scarica il livello precedente, pulisce memoria, carica il nuovo.
+- `LoadAdditiveAsync` e `UnloadSceneAsync`.
+Emette eventi `OnLoadStarted`, `OnProgressUpdated`, `OnSceneLoaded`.
 
 ---
 
-### 🎮 Le 3 Cose che puoi fare
+## 📦 02. Audio Service (`AudioService`)
 
-1. **`SwitchSceneAsync` (Cambia stanza principale)**
-   - *Cosa fa sotto il cofano:*
-     1. Scarica la scena attiva precedente.
-     2. Butta via gli asset rimasti orfani in memoria (`Resources.UnloadUnusedAssets`).
-     3. Carica la nuova scena in modalità additiva.
-     4. La imposta come scena attiva in Unity.
-   - *Ritorna:* `true` se il cambio è riuscito, `false` se c'è stato un problema o cancellazione.
-
-2. **`LoadAdditiveAsync` (Aggiungi un livello sopra)**
-   - *Cosa fa:* Carica una scena in più senza toccare quella attuale. Se è già caricata, non fa nulla di stupido ed esce subito.
-
-3. **`UnloadSceneAsync` (Togli un livello aggiunto)**
-   - *Cosa fa:* Scarica solo quella scena specifica ed esegue opzionalmente la pulizia della memoria.
+Implementa `IAudioService`. Responsabile per riprodurre BGM con Fade (crossfade o stop) e SFX.
+- `PlayBGM(AudioClip)`: sfuma automaticamente tra le tracce.
+- `PlaySFX(AudioClip)`: gestito con un pool base (AudioSource in array).
+- Sincronizzato con `ISaveService` per volumi Master/Music/SFX.
 
 ---
 
-### ⚡ Come si usa (Codice da copiare)
+## 📦 03. UI Framework (`UIManager` - ArtLake)
 
-#### Da Codice C# (con `await`)
-
-```csharp
-using UnityEngine;
-
-public class GameFlowExample : MonoBehaviour
-{
-    [SerializeField] private SceneField gameplayScene; // Evita errori di battitura nelle stringhe!
-
-    public async void StartGame()
-    {
-        // Modo raccomandato: tramite SceneField
-        bool success = await SceneLoader.Instance.SwitchSceneAsync(gameplayScene);
-
-        if (!success)
-        {
-            Debug.LogError("Impossibile caricare la scena!");
-            return;
-        }
-
-        Debug.Log("Siamo nel gameplay!");
-    }
-
-    public async void OpenPauseMenu()
-    {
-        // Carica la schermata di pausa sopra al gioco
-        await SceneLoader.Instance.LoadAdditiveAsync("PauseMenuScene");
-    }
-
-    public async void ClosePauseMenu()
-    {
-        // Chiude e scarica la schermata di pausa
-        await SceneLoader.Instance.UnloadSceneAsync("PauseMenuScene");
-    }
-}
-```
-
-#### Da un Bottone dell'Inspector (Zero Codice!)
-Se vuoi cambiare scena cliccando un bottone della UI senza scrivere nemmeno una riga di C#:
-1. Seleziona il tuo `Button` nella gerarchia.
-2. Nella sezione **On Click ()**, clicca sul `+`.
-3. Trascina l'oggetto `SceneLoader` (presente nella scena `Bootstrap`).
-4. Nel menu a tendina seleziona: `SceneLoader -> SwitchScene (string)`.
-5. Digita il nome esatto della scena target (es. `MainMenu`).
+Implementa `IUIManager` registrato nel `ServiceLocator`.
+- Gestisce viste a cascata tramite stack `Show<T>` e `Back()`.
+- Distingue `PanelType.Screen` (sostituiscono la vista precedente) e `PanelType.Popup` (sovrapposti con blocco opzionale interazione).
+- Sincronizzato con `IInputReader` e `IGameStateManager` per il flow Pause/Lobby/Gameplay.
 
 ---
 
-### 📊 Come mostrare una Barra di Caricamento (Eventi)
+## 📦 04. Save System (`SaveService`)
 
-Lo `SceneLoader` non tocca direttamente la grafica: emette eventi a cui qualsiasi UI può agganciarsi.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant UI as Schermata di Caricamento
-    participant SL as SceneLoader
-
-    SL->>UI: OnLoadStarted (Mostra lo schermo nero o il canvas)
-    loop Durante il download della scena
-        SL->>UI: OnProgressUpdated(0.0f -> 1.0f) (Muovi la barra di riempimento)
-    end
-    SL->>UI: OnSceneLoaded("Gameplay") (La scena è pronta in memoria)
-    SL->>UI: OnLoadCompleted (Fai sparire la schermata di caricamento)
-```
-
-#### Esempio di Barra UI pronta all'uso:
-```csharp
-using UnityEngine;
-using UnityEngine.UI;
-
-public class LoadingScreenUI : MonoBehaviour
-{
-    [SerializeField] private GameObject screenRoot;
-    [SerializeField] private Slider progressBar;
-
-    private void OnEnable()
-    {
-        SceneLoader.Instance.OnLoadStarted += HandleLoadStarted;
-        SceneLoader.Instance.OnProgressUpdated += HandleProgressUpdated;
-        SceneLoader.Instance.OnLoadCompleted += HandleLoadCompleted;
-    }
-
-    private void OnDisable()
-    {
-        if (SceneLoader.Instance == null) return;
-        SceneLoader.Instance.OnLoadStarted -= HandleLoadStarted;
-        SceneLoader.Instance.OnProgressUpdated -= HandleProgressUpdated;
-        SceneLoader.Instance.OnLoadCompleted -= HandleLoadCompleted;
-    }
-
-    private void HandleLoadStarted()
-    {
-        screenRoot.SetActive(true);
-        progressBar.value = 0f;
-    }
-
-    private void HandleProgressUpdated(float progress)
-    {
-        progressBar.value = progress;
-    }
-
-    private void HandleLoadCompleted()
-    {
-        screenRoot.SetActive(false);
-    }
-}
-```
+Implementa `ISaveService`. Usa la classe utility `JsonFileHandler` per scrivere in `Application.persistentDataPath`.
+File separati:
+- `SettingsData`: audio (Master/Music/SFX) e video (Fullscreen). Caricato durante il Boot.
+- `GameData`: progresso di gioco base.
 
 ---
 
-### 🛡️ Regole Difensive (Cosa NON fare e come il codice ti salva)
+## 📦 05. Game State (`GameStateManager`)
 
-| Situazione da scimmia 🐒 | Cosa succede dietro le quinte 🛡️ |
-|---|---|
-| **Spammi il bottone "Gioca" 10 volte di fila** | Lo `SceneLoader` controlla `IsLoading`. Se un'operazione è già in corso, ignora tutti i click successivi e ti avverte con un warning giallo in console. |
-| **Il gioco è in pausa (`Time.timeScale == 0`)** | Unity a volte congela le coroutine tradizionali. Con i nuovi `Awaitable`, il caricamento asincrono continua a funzionare regolarmente, ma ti stampa un warning difensivo per ricordarti che il tempo di gioco è fermo. |
-| **Dimentichi di mettere la scena nei `Build Settings`** | Lo `SceneLoader` verifica prima la presenza della scena. Se non esiste, non causa eccezioni non gestite: scrive un errore chiaro in console e restituisce `false`. |
-| **Chiami per sbaglio `UnloadScene("Bootstrap")`** | La scena `Bootstrap` è protetta da un blocco ferreo. Lo scaricamento viene rifiutato a prescindere per impedire la distruzione dei manager globali. |
+Implementa `IGameStateManager`. Enum: `Boot`, `MainMenu`, `Lobby`, `Gameplay`, `Paused`, `GameOver`.
+- Risolve l'interazione tra cursor (LockMode) e Time.timeScale (1 o 0).
+- Nel momento di switch in stato UI (MainMenu, Paused), comunica all'`IInputReader` di attivare la mappa `UI`. Nello stato `Gameplay`, attiva `Player`.
 
 ---
 
-### 🔍 Riferimento Rapido alle Interfacce
+## 📦 06. Input Handling (`InputReaderSO`)
 
-I componenti interagiscono con [`ISceneLoader`](file:///c:/Users/francesco/Documents/Github/UnityTemplate/Assets/_Project/Architecture/Managers/ISceneLoader.cs):
+Interfaccia `IInputReader`. Disaccoppia i controlli Unity Input System dalla logica.
+- Implementato con lo `ScriptableObject` **`InputReaderSO`** generato da un file `.inputactions`.
+- Inietta l'input in giro tramite eventi (`MovePerformed`, `JumpPerformed`, `PausePerformed`) ed espone polling diretto (`MoveComposite`).
+- Offre `EnablePlayerActions()` e `EnableUIActions()` per non incrociare gli input quando si è in menu.
 
-```csharp
-public interface ISceneLoader
-{
-    // Stato
-    bool IsLoading { get; }
-    string CurrentActiveSceneName { get; }
+---
 
-    // Eventi
-    event Action OnLoadStarted;
-    event Action<float> OnProgressUpdated;
-    event Action<string> OnSceneLoaded;
-    event Action<string> OnSceneUnloaded;
-    event Action OnLoadCompleted;
+## 📦 07. Player & Camera (`PlayerController`, `CameraController`)
 
-    // Metodi Asincroni (Unity 6 Awaitable)
-    Awaitable<bool> SwitchSceneAsync(string sceneName, bool cleanUnusedAssets = true, CancellationToken cancellationToken = default);
-    Awaitable<bool> SwitchSceneAsync(SceneField sceneField, bool cleanUnusedAssets = true, CancellationToken cancellationToken = default);
+- `PlayerController`: usa il `CharacterController` base di Unity. Movimento 3D direzionato rispetto alla telecamera, salto e sprint. Usa l'interfaccia `IInputReader`. Configurazione esposta tramite `PlayerMovementConfig.asset`.
+- `CameraController`: orbita di terza persona con mouse e stick, offset, clamping e smoothing. Assolutamente indipendente e testato senza cinemachine.
 
-    Awaitable<bool> LoadAdditiveAsync(string sceneName, bool setActive = false, CancellationToken cancellationToken = default);
-    Awaitable<bool> LoadAdditiveAsync(SceneField sceneField, bool setActive = false, CancellationToken cancellationToken = default);
+---
 
-    Awaitable<bool> UnloadSceneAsync(string sceneName, bool cleanUnusedAssets = true, CancellationToken cancellationToken = default);
-    Awaitable<bool> UnloadSceneAsync(SceneField sceneField, bool cleanUnusedAssets = true, CancellationToken cancellationToken = default);
-
-    // Controlli
-    bool IsSceneLoaded(string sceneName);
-    bool IsSceneLoaded(SceneField sceneField);
-}
-```
+## Flusso di Lavoro (Monkey-Proof)
+1. **Scene flow**: Si apre solo e sempre `Bootstrap` nell'editor. Da lì premi Play.
+2. `Bootstrapper` attende un tick e sincronizza audio e opzioni utente da JSON.
+3. Lo `SceneLoader` carica `MainMenu`.
+4. L'utente sceglie "Gioca". Lo `SceneLoader` va in `Lobby`.
+5. Dalla Lobby a `GamePlay`. L'UI passa a `HudUI`, il GameState abilita `Player` e nasconde il cursore.
+6. Alla pressione di ESC/Start, il `GameStateManager` va in Pausa e cambia l'input map, mentre la `HudUI` apre la `PauseUI`.

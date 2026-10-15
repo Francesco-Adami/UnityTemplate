@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
+using Project.Core;
+using Project.GameState;
+using Project.Input;
+using Project.UI;
 using UnityEngine;
 
 namespace ArtLake.UI
 {
-    public class UIManager : MonoBehaviour
+    public class UIManager : MonoBehaviour, IUIManager
     {
         public static UIManager Instance { get; private set; }
 
@@ -21,6 +25,10 @@ namespace ArtLake.UI
         public BaseUI CurrentScreen => currentScreen;
         public int ActivePopupCount => popupStack.Count;
 
+        private GameObject lastSelectedGameObject;
+        private IInputReader _inputReader;
+        private IGameStateManager _gsm;
+
         private void Awake()
         {
             if (Instance != null && Instance != this)
@@ -36,7 +44,17 @@ namespace ArtLake.UI
                 DontDestroyOnLoad(gameObject);
             }
 
+            ServiceLocator.Register<IUIManager>(this);
             InitializePanels();
+        }
+
+        private void Start()
+        {
+            if (ServiceLocator.TryGet<IInputReader>(out var inputReader))
+            {
+                _inputReader = inputReader;
+                _inputReader.PausePerformed += HandleCancelOrPauseInput;
+            }
         }
 
         private void InitializePanels()
@@ -173,10 +191,23 @@ namespace ArtLake.UI
 
         public void CloseAllPopups()
         {
+            var tempList = new List<BaseUI>();
             while (popupStack.Count > 0)
             {
                 BaseUI popup = popupStack.Pop();
-                popup.Close();
+                if (popup is LoadingUI)
+                {
+                    tempList.Add(popup);
+                }
+                else
+                {
+                    popup.Close();
+                }
+            }
+
+            for (int i = tempList.Count - 1; i >= 0; i--)
+            {
+                popupStack.Push(tempList[i]);
             }
         }
 
@@ -195,6 +226,62 @@ namespace ArtLake.UI
             for (int i = tempList.Count - 1; i >= 0; i--)
             {
                 popupStack.Push(tempList[i]);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (_inputReader != null)
+            {
+                _inputReader.PausePerformed -= HandleCancelOrPauseInput;
+            }
+
+            if (Instance == this)
+            {
+                ServiceLocator.Unregister<IUIManager>();
+            }
+        }
+
+        private void HandleCancelOrPauseInput()
+        {
+            if (popupStack.Count > 0)
+            {
+                var topPopup = popupStack.Peek();
+                if (topPopup != null && topPopup.DismissOnCancel)
+                {
+                    Back();
+                }
+                return;
+            }
+
+            if (_gsm == null)
+            {
+                ServiceLocator.TryGet(out _gsm);
+            }
+
+            if (_gsm != null && (_gsm.CurrentState == GameState.Gameplay || _gsm.CurrentState == GameState.Lobby))
+            {
+                _gsm.PauseGame();
+                Show<PauseUI>();
+            }
+        }
+
+        private void Update()
+        {
+            var eventSystem = UnityEngine.EventSystems.EventSystem.current;
+            if (eventSystem != null)
+            {
+                if (eventSystem.currentSelectedGameObject != null)
+                {
+                    lastSelectedGameObject = eventSystem.currentSelectedGameObject;
+                }
+                else if (lastSelectedGameObject != null && lastSelectedGameObject.activeInHierarchy)
+                {
+                    if (UnityEngine.InputSystem.Gamepad.current != null && UnityEngine.InputSystem.Gamepad.current.wasUpdatedThisFrame)
+                    {
+                        eventSystem.SetSelectedGameObject(lastSelectedGameObject);
+                    }
+                }
             }
         }
     }

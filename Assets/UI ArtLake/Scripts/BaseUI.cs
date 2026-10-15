@@ -13,10 +13,13 @@ namespace ArtLake.UI
     {
         [Header("Panel Configuration")]
         [SerializeField] protected PanelType panelType = PanelType.Screen;
+        [Header("Controller Navigation")]
+        [SerializeField] protected UnityEngine.UI.Selectable firstSelected;
 
         protected CanvasGroup canvasGroup;
         public PanelType Type => panelType;
         public bool IsOpen { get; private set; }
+        public virtual bool DismissOnCancel => true;
 
         protected virtual void Awake()
         {
@@ -37,11 +40,17 @@ namespace ArtLake.UI
 
         public virtual void Open()
         {
+            if (!gameObject.activeSelf) gameObject.SetActive(true);
             EnsureCanvasGroup();
             canvasGroup.alpha = 1f;
             canvasGroup.interactable = true;
             canvasGroup.blocksRaycasts = true;
             IsOpen = true;
+
+            if (firstSelected != null && UnityEngine.EventSystems.EventSystem.current != null)
+            {
+                UnityEngine.EventSystems.EventSystem.current.SetSelectedGameObject(firstSelected.gameObject);
+            }
 
             OnOpen();
         }

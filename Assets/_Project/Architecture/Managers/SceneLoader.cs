@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading;
+using Project.Core;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -33,6 +34,7 @@ public class SceneLoader : MonoBehaviour, ISceneLoader
 
         Instance = this;
         DontDestroyOnLoad(gameObject);
+        ServiceLocator.Register<ISceneLoader>(this);
 
         if (string.IsNullOrEmpty(_currentActiveSceneName))
         {
@@ -49,6 +51,7 @@ public class SceneLoader : MonoBehaviour, ISceneLoader
         if (Instance == this)
         {
             Instance = null;
+            ServiceLocator.Unregister<ISceneLoader>();
         }
     }
 

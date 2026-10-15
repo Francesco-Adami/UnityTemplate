@@ -1,3 +1,6 @@
+using Project.Core;
+using Project.GameState;
+using Project.Input;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -7,11 +10,18 @@ namespace ArtLake.UI
     {
         [Header("HUD Configuration")]
         [SerializeField] private Button pauseButton;
-        [SerializeField] private bool listenToEscapeKey = true;
+
+        private IGameStateManager _gsm;
 
         private void Reset()
         {
             panelType = PanelType.Screen;
+        }
+
+        protected override void OnOpen()
+        {
+            base.OnOpen();
+            ResolveServices();
         }
 
         private void OnEnable()
@@ -24,25 +34,26 @@ namespace ArtLake.UI
             if (pauseButton != null) pauseButton.onClick.RemoveListener(TogglePause);
         }
 
-        private void Update()
+        private void ResolveServices()
         {
-            if (listenToEscapeKey && Input.GetKeyUp(KeyCode.Escape))
-            {
-                TogglePause();
-            }
+            ServiceLocator.TryGet<IGameStateManager>(out _gsm);
         }
 
         public void TogglePause()
         {
-            if (UIManager.Instance == null) return;
+            if (_gsm == null)
+            {
+                if (!ServiceLocator.TryGet<IGameStateManager>(out _gsm)) return;
+            }
 
-            if (UIManager.Instance.IsOpen<PauseUI>())
+            if (_gsm.CurrentState == GameState.Gameplay || _gsm.CurrentState == GameState.Lobby)
+            {
+                _gsm.PauseGame();
+                UIManager.Instance.Show<PauseUI>();
+            }
+            else if (_gsm.CurrentState == GameState.Paused)
             {
                 UIManager.Instance.Hide<PauseUI>();
-            }
-            else
-            {
-                UIManager.Instance.Show<PauseUI>();
             }
         }
     }
